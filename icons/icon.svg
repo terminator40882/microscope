@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Mikroskop">
+  <rect width="512" height="512" rx="96" fill="#07100b"/>
+  <circle cx="256" cy="256" r="174" fill="#b9f35b"/>
+  <circle cx="256" cy="256" r="108" fill="#47701e"/>
+  <circle cx="256" cy="256" r="56" fill="#07100b"/>
+  <path d="M139 302a144 144 0 0 1 67-164" fill="none" stroke="#efffd0" stroke-linecap="round" stroke-width="14"/>
+</svg>

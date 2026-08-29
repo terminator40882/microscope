@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#050807" />
+    <meta name="description" content="Installierbare Android-Kameralupe mit rein digitalem Zoom." />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+    <title>Mikroskop</title>
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark" aria-hidden="true">◉</span><span>Mikroskop</span></div>
+        <div class="top-actions">
+          <span id="focusBadge" class="badge">Nahfokus wird geprüft</span>
+          <button id="installButton" class="button button-secondary" hidden>App installieren</button>
+        </div>
+      </header>
+
+      <section id="viewer" class="viewer" aria-label="Kameravorschau">
+        <video id="cameraVideo" playsinline muted aria-hidden="true"></video>
+        <canvas id="previewCanvas"></canvas>
+        <div id="reticle" class="reticle" aria-hidden="true"><span></span></div>
+        <div id="startPanel" class="start-panel">
+          <div class="lens-icon" aria-hidden="true">◉</div>
+          <h1>Deine Kamera als Lupe</h1>
+          <p>Erlaube den Kamerazugriff, um die rückseitigen Kameras zu erkennen und den nächsten verfügbaren Fokus zu verwenden.</p>
+          <button id="startButton" class="button button-primary">Kamera starten</button>
+          <small>Kamerabilder werden nur auf diesem Gerät verarbeitet.</small>
+        </div>
+        <output id="toast" class="toast" aria-live="polite"></output>
+      </section>
+
+      <aside class="controls" aria-label="Kamerasteuerung">
+        <label class="field camera-field">
+          <span>Kamera</span>
+          <select id="cameraSelect" disabled><option>Rückkamera suchen …</option></select>
+        </label>
+        <div class="zoom-control">
+          <div class="zoom-heading"><label for="zoomRange">Digitaler Zoom</label><output id="zoomValue">1,0×</output></div>
+          <div class="range-row"><span>1×</span><input id="zoomRange" type="range" min="1" max="8" value="1" step="0.1" disabled /><span>8×</span></div>
+          <small>Reine Ausschnittsvergrößerung – kein Kamera-Zoom</small>
+        </div>
+        <button id="captureButton" class="capture" disabled aria-label="Foto aufnehmen"><span></span></button>
+        <button id="resetButton" class="button button-secondary compact" disabled>Zoom zurücksetzen</button>
+      </aside>
+    </main>
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
