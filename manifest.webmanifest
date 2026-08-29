@@ -1,0 +1,14 @@
+{
+  "name": "Mikroskop – digitale Kameralupe",
+  "short_name": "Mikroskop",
+  "description": "Rückkamera-Lupe mit Nahfokus und rein digitalem Zoom.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#050807",
+  "theme_color": "#050807",
+  "icons": [
+    { "src": "./icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

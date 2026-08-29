@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#050807" />
+    <meta name="description" content="Installierbare Android-Kameralupe mit rein digitalem Zoom." />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+    <title>Mikroskop</title>
+  </head>
+  <body>
+    <main class="app">
+      <section id="viewer" class="viewer" aria-label="Kameravorschau">
+        <video id="cameraVideo" playsinline muted aria-hidden="true"></video>
+        <canvas id="previewCanvas"></canvas>
+        <div id="startPanel" class="start-panel">
+          <button id="startButton" class="start-button" aria-label="Kamera starten">▶</button>
+          <p>Kamera starten</p>
+        </div>
+        <output id="toast" class="toast" aria-live="polite"></output>
+        <button id="settingsButton" class="glass-button settings-button" aria-label="Einstellungen öffnen" aria-expanded="false">☰</button>
+        <aside id="settingsPanel" class="settings-panel" aria-label="Kameraeinstellungen" hidden>
+          <label><span>Kamera</span><select id="cameraSelect" disabled><option>Rückkamera suchen …</option></select></label>
+          <label><span>Zoom <output id="zoomValue">1,0×</output></span><input id="zoomRange" type="range" min="1" max="8" value="1" step="0.1" disabled /></label>
+          <label><span>Fokus</span><select id="focusSelect" disabled><option value="near">Maximal nah</option><option value="continuous">Automatisch</option></select></label>
+          <button id="installButton" class="panel-button" hidden>App installieren</button>
+        </aside>
+        <button id="captureButton" class="glass-button capture" disabled aria-label="Foto aufnehmen"><span></span></button>
+      </section>
+    </main>
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
