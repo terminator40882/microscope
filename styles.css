@@ -46,6 +46,31 @@ button, select, input { font: inherit; color: inherit; }
 
 .ctl-start { top: 50%; left: 50%; width: 88px; height: 88px; translate: -50% -50%; }
 
+/* Im Browser das einzige Bedienelement: Installation anbieten. */
+.install {
+  position: fixed;
+  left: 50%;
+  bottom: var(--pad-bottom);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding: 0 18px 0 14px;
+  translate: -50% 0;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  font-size: .95rem;
+  cursor: pointer;
+  transition: background .15s, transform .1s;
+}
+.install[hidden] { display: none; }
+.install:active { transform: translateX(-50%) scale(.96); background: var(--glass-strong); }
+.install svg { width: 20px; height: 20px; fill: none; stroke: rgba(255, 255, 255, .92); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
 /* Menü */
 .menu {
   position: fixed;
@@ -87,9 +112,9 @@ input[type="range"]:disabled { opacity: .45; }
 .toast {
   position: fixed;
   left: 50%;
-  bottom: var(--pad-bottom);
+  top: var(--pad-top);
   padding: 8px 14px;
-  translate: -50% 12px;
+  translate: -50% -12px;
   border-radius: 999px;
   background: rgba(30, 30, 30, .72);
   backdrop-filter: blur(10px);
