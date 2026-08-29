@@ -14,46 +14,107 @@
   </head>
   <body>
     <video id="cameraVideo" playsinline muted aria-hidden="true"></video>
-    <canvas id="previewCanvas"></canvas>
 
-    <button id="menuButton" class="ctl ctl-menu" aria-label="Menü" aria-expanded="false" aria-controls="menu" hidden>
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
-    </button>
+    <div id="stage" class="stage">
+      <canvas id="previewCanvas"></canvas>
+      <div class="scrim" aria-hidden="true"></div>
 
-    <button id="captureButton" class="ctl ctl-shutter" aria-label="Auslösen" hidden><span></span></button>
+      <output id="hud" class="hud" aria-live="off"></output>
 
-    <button id="installButton" class="install" hidden>
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10m0 0 4-4m-4 4-4-4M4 19h16" /></svg>
-      <span>Installieren</span>
-    </button>
+      <button id="menuButton" class="ctl ctl-menu" aria-label="Menü" aria-expanded="false" aria-controls="menu" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+      </button>
 
-    <button id="startButton" class="ctl ctl-start" aria-label="Kamera starten">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3.2l1.6-2.2h6.4L16.8 8H20v11H4z" /><circle cx="12" cy="13.5" r="3.6" /></svg>
-    </button>
+      <button id="captureButton" class="ctl ctl-shutter" aria-label="Auslösen" hidden><span></span></button>
 
-    <div id="menu" class="menu" role="dialog" aria-label="Einstellungen" hidden>
-      <label class="row">
-        <span>Kamera</span>
-        <select id="cameraSelect" disabled></select>
-      </label>
+      <button id="installButton" class="install" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10m0 0 4-4m-4 4-4-4M4 19h16" /></svg>
+        <span>Installieren</span>
+      </button>
 
-      <label class="row">
-        <span>Zoom<em id="zoomValue">1,0×</em></span>
-        <input id="zoomRange" type="range" min="1" max="8" step="0.1" value="1" disabled />
-      </label>
+      <button id="startButton" class="ctl ctl-start" aria-label="Kamera starten">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3.2l1.6-2.2h6.4L16.8 8H20v11H4z" /><circle cx="12" cy="13.5" r="3.6" /></svg>
+      </button>
 
-      <label class="row">
-        <span>Fokus</span>
-        <select id="focusMode" disabled></select>
-      </label>
+      <div id="menu" class="menu" role="dialog" aria-label="Einstellungen" hidden>
+        <label class="row">
+          <span>Kamera</span>
+          <select id="cameraSelect" disabled></select>
+        </label>
 
-      <label class="row" id="focusDistanceRow" hidden>
-        <span>Distanz<em id="focusValue"></em></span>
-        <input id="focusRange" type="range" min="0" max="1" step="0.01" value="0" />
-      </label>
+        <label class="row">
+          <span>Zoom<em id="zoomValue">1,000×</em></span>
+          <span class="pair">
+            <input id="zoomRange" type="range" min="0.2" max="8" step="0.01" value="1" disabled />
+            <input id="zoomNumber" type="number" step="0.01" inputmode="decimal" />
+          </span>
+        </label>
+
+        <label class="row">
+          <span>Format<em id="aspectValue">1,600</em></span>
+          <span class="pair">
+            <select id="aspectSelect">
+              <option value="1.6" selected>16:10</option>
+              <option value="1.7777777778">16:9</option>
+              <option value="1.5">3:2</option>
+              <option value="1.3333333333">4:3</option>
+              <option value="1">1:1</option>
+              <option value="sensor">Sensor</option>
+            </select>
+            <input id="aspectNumber" type="number" min="0.3" max="4" step="0.001" inputmode="decimal" />
+          </span>
+        </label>
+
+        <label class="row">
+          <span>Fokus</span>
+          <select id="focusMode" disabled></select>
+        </label>
+
+        <label class="row" id="focusDistanceRow" hidden>
+          <span>Distanz<em id="focusValue"></em></span>
+          <span class="pair">
+            <input id="focusRange" type="range" min="0" max="1" step="0.01" value="0" />
+            <input id="focusNumber" type="number" step="0.01" inputmode="decimal" />
+          </span>
+        </label>
+
+        <label class="row">
+          <span>Empfindlichkeit ↕<em>Zoom</em></span>
+          <span class="pair">
+            <input id="sensYRange" type="range" min="-8" max="8" step="0.1" />
+            <input id="sensYNumber" type="number" step="0.1" inputmode="decimal" />
+          </span>
+        </label>
+
+        <label class="row">
+          <span>Empfindlichkeit ↔<em>Fokus</em></span>
+          <span class="pair">
+            <input id="sensXRange" type="range" min="-4" max="4" step="0.05" />
+            <input id="sensXNumber" type="number" step="0.05" inputmode="decimal" />
+          </span>
+        </label>
+
+        <label class="row">
+          <span>Max. Zoom</span>
+          <span class="pair">
+            <input id="maxZoomRange" type="range" min="2" max="16" step="0.5" />
+            <input id="maxZoomNumber" type="number" min="2" max="16" step="0.5" inputmode="decimal" />
+          </span>
+        </label>
+
+        <dl class="readout" id="readout">
+          <dt>Auflösung</dt><dd id="infoResolution">–</dd>
+          <dt>Ausschnitt</dt><dd id="infoCrop">–</dd>
+          <dt>Zoom min / voll</dt><dd id="infoZoomRange">–</dd>
+          <dt>Ausrichtung</dt><dd id="infoOrientation">–</dd>
+          <dt>Gerät</dt><dd id="infoDevice">–</dd>
+        </dl>
+
+        <button id="resetButton" class="reset" type="button">Werte zurücksetzen</button>
+      </div>
+
+      <output id="toast" class="toast" aria-live="polite"></output>
     </div>
-
-    <output id="toast" class="toast" aria-live="polite"></output>
     <script src="./app.js" type="module"></script>
   </body>
 </html>

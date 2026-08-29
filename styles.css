@@ -4,10 +4,14 @@
   --glass: rgba(128, 128, 128, .38);
   --glass-strong: rgba(128, 128, 128, .52);
   --edge: rgba(255, 255, 255, .22);
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --pad-top: max(14px, env(safe-area-inset-top));
   --pad-right: max(14px, env(safe-area-inset-right));
   --pad-bottom: max(14px, env(safe-area-inset-bottom));
   --pad-left: max(14px, env(safe-area-inset-left));
+  --shutter: 68px;
+  --menu-size: 38px;
+  --column: 96px;
 }
 * { box-sizing: border-box; }
 html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; background: #000; color: #fff; overscroll-behavior: none; }
@@ -15,11 +19,17 @@ body { position: fixed; inset: 0; touch-action: none; -webkit-user-select: none;
 button, select, input { font: inherit; color: inherit; }
 
 #cameraVideo { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+/* Die Bühne ist immer quer: steht das Gerät hochkant, wird sie gedreht. */
+.stage { position: fixed; top: 0; left: 0; width: 100vw; height: 100dvh; overflow: hidden; transform-origin: 50% 50%; }
+.stage.rotated { top: 50%; left: 50%; width: 100dvh; height: 100vw; transform: translate(-50%, -50%) rotate(90deg); }
 #previewCanvas { display: block; width: 100%; height: 100%; background: #000; }
 
-/* Halbdurchsichtige graue Bedienelemente */
+/* Schmaler Verlauf, damit die Bedienelemente auf hellen Motiven lesbar bleiben. */
+.scrim { position: absolute; top: 0; right: 0; bottom: 0; width: var(--column); background: linear-gradient(to left, rgba(0, 0, 0, .42), transparent); pointer-events: none; }
+
 .ctl {
-  position: fixed;
+  position: absolute;
   display: grid;
   place-items: center;
   padding: 0;
@@ -29,26 +39,54 @@ button, select, input { font: inherit; color: inherit; }
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   cursor: pointer;
-  transition: background .15s, transform .1s, opacity .15s;
+  transition: background .15s, transform .1s;
 }
 .ctl[hidden] { display: none; }
-.ctl:active { transform: scale(.94); background: var(--glass-strong); }
+.ctl:active { background: var(--glass-strong); }
 .ctl svg { width: 55%; height: 55%; fill: none; stroke: rgba(255, 255, 255, .92); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.ctl-start svg { stroke-width: 1.4; }
 
-.ctl-menu { top: 50%; left: var(--pad-left); width: 52px; height: 52px; translate: 0 -50%; }
-.ctl-menu[aria-expanded="true"] { background: var(--glass-strong); }
-
-.ctl-shutter { top: 50%; right: var(--pad-right); width: 68px; height: 68px; translate: 0 -50%; padding: 6px; }
-.ctl-shutter span { width: 100%; height: 100%; border-radius: 50%; background: rgba(255, 255, 255, .82); }
+/* Auslöser: rechte lange Kante, vertikal mittig. */
+.ctl-shutter { top: 50%; right: var(--pad-right); width: var(--shutter); height: var(--shutter); translate: 0 -50%; padding: 5px; }
+.ctl-shutter span { display: block; width: 100%; height: 100%; border-radius: 50%; background: rgba(255, 255, 255, .85); transition: transform .1s, background .1s; }
 .ctl-shutter:active span { transform: scale(.86); }
 .ctl-shutter.flash span { background: #fff; }
 
+/* Menü: kleiner, zwischen Auslöser und oberer langer Kante, gleiche Spalte. */
+.ctl-menu {
+  top: calc(50% - var(--shutter) / 2 - 22px - var(--menu-size) / 2);
+  right: calc(var(--pad-right) + (var(--shutter) - var(--menu-size)) / 2);
+  width: var(--menu-size);
+  height: var(--menu-size);
+}
+.ctl-menu[aria-expanded="true"] { background: var(--glass-strong); }
+
 .ctl-start { top: 50%; left: 50%; width: 88px; height: 88px; translate: -50% -50%; }
+.ctl-start svg { stroke-width: 1.4; }
+
+/* Zahlen während einer Geste, an der linken langen Kante. */
+.hud {
+  position: absolute;
+  top: 50%;
+  left: var(--pad-left);
+  translate: 0 -50%;
+  padding: 7px 11px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, .42);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  font-family: var(--mono);
+  font-size: .82rem;
+  line-height: 1.5;
+  white-space: pre;
+  opacity: 0;
+  transition: opacity .25s;
+  pointer-events: none;
+}
+.hud.show { opacity: 1; }
 
 /* Im Browser das einzige Bedienelement: Installation anbieten. */
 .install {
-  position: fixed;
+  position: absolute;
   left: 50%;
   bottom: var(--pad-bottom);
   z-index: 4;
@@ -71,16 +109,16 @@ button, select, input { font: inherit; color: inherit; }
 .install:active { transform: translateX(-50%) scale(.96); background: var(--glass-strong); }
 .install svg { width: 20px; height: 20px; fill: none; stroke: rgba(255, 255, 255, .92); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
-/* Menü */
+/* Menü-Panel: neben der Steuerspalte. */
 .menu {
-  position: fixed;
+  position: absolute;
   top: 50%;
-  left: calc(var(--pad-left) + 64px);
+  right: calc(var(--pad-right) + var(--shutter) + 14px);
   z-index: 3;
   display: grid;
-  gap: 14px;
-  width: min(300px, calc(100vw - var(--pad-left) - var(--pad-right) - 150px));
-  max-height: calc(100dvh - var(--pad-top) - var(--pad-bottom));
+  gap: 12px;
+  width: min(320px, calc(100% - var(--pad-left) - var(--pad-right) - var(--shutter) - 28px));
+  max-height: calc(100% - var(--pad-top) - var(--pad-bottom));
   padding: 14px;
   translate: 0 -50%;
   border: 1px solid var(--edge);
@@ -92,25 +130,33 @@ button, select, input { font: inherit; color: inherit; }
 }
 .menu[hidden] { display: none; }
 .row { display: grid; gap: 6px; min-width: 0; }
-.row > span { display: flex; justify-content: space-between; gap: 10px; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: rgba(255, 255, 255, .66); }
-.row em { font-style: normal; color: rgba(255, 255, 255, .92); }
+.row > span:first-child { display: flex; justify-content: space-between; gap: 10px; font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; color: rgba(255, 255, 255, .66); }
+.row em { font-style: normal; font-family: var(--mono); text-transform: none; letter-spacing: 0; color: rgba(255, 255, 255, .92); }
 .row[hidden] { display: none; }
-select {
-  width: 100%;
-  height: 38px;
-  padding: 0 8px;
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) 76px; align-items: center; gap: 8px; }
+select, input[type="number"] {
+  height: 34px;
+  min-width: 0;
+  padding: 0 7px;
   border: 1px solid var(--edge);
   border-radius: 9px;
   background: rgba(40, 40, 40, .6);
-  text-overflow: ellipsis;
 }
-select:disabled { opacity: .45; }
+select { width: 100%; text-overflow: ellipsis; }
+input[type="number"] { font-family: var(--mono); font-size: .82rem; text-align: right; }
+select:disabled, input:disabled { opacity: .45; }
 option { background: #1a1a1a; color: #fff; }
 input[type="range"] { width: 100%; margin: 0; accent-color: rgba(255, 255, 255, .85); }
-input[type="range"]:disabled { opacity: .45; }
+
+.readout { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 10px; margin: 2px 0 0; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, .16); font-size: .72rem; }
+.readout dt { color: rgba(255, 255, 255, .6); }
+.readout dd { margin: 0; font-family: var(--mono); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.reset { height: 34px; border: 1px solid var(--edge); border-radius: 9px; background: rgba(40, 40, 40, .6); font-size: .82rem; cursor: pointer; }
+.reset:active { background: var(--glass-strong); }
 
 .toast {
-  position: fixed;
+  position: absolute;
   left: 50%;
   top: var(--pad-top);
   padding: 8px 14px;
@@ -128,7 +174,7 @@ input[type="range"]:disabled { opacity: .45; }
 .toast.show { opacity: 1; translate: -50% 0; }
 
 @media (max-height: 420px) {
-  .ctl-menu { width: 46px; height: 46px; }
-  .ctl-shutter { width: 58px; height: 58px; }
-  .menu { gap: 10px; padding: 11px; left: calc(var(--pad-left) + 56px); }
+  :root { --shutter: 58px; --menu-size: 34px; --column: 84px; }
+  .menu { gap: 9px; padding: 11px; }
+  .readout { font-size: .68rem; }
 }

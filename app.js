@@ -1,43 +1,109 @@
-const video = document.querySelector('#cameraVideo');
-const canvas = document.querySelector('#previewCanvas');
+/* Mikroskop – Kamera-Lupe als PWA.
+   Aufbau: Elemente → Einstellungen → Bühne/Ausrichtung → Kamera → Fokus →
+   Rendering → Aufnahme → Gesten → Menü/Zahlen → Installation & Update. */
+
+const $ = (selector) => document.querySelector(selector);
+
+const video = $('#cameraVideo');
+const stage = $('#stage');
+const canvas = $('#previewCanvas');
 const context = canvas.getContext('2d', { alpha: false });
-const startButton = document.querySelector('#startButton');
-const installButton = document.querySelector('#installButton');
-const menuButton = document.querySelector('#menuButton');
-const menu = document.querySelector('#menu');
-const captureButton = document.querySelector('#captureButton');
-const cameraSelect = document.querySelector('#cameraSelect');
-const zoomRange = document.querySelector('#zoomRange');
-const zoomValue = document.querySelector('#zoomValue');
-const focusMode = document.querySelector('#focusMode');
-const focusDistanceRow = document.querySelector('#focusDistanceRow');
-const focusRange = document.querySelector('#focusRange');
-const focusValue = document.querySelector('#focusValue');
-const toast = document.querySelector('#toast');
+const hud = $('#hud');
+const toast = $('#toast');
+const startButton = $('#startButton');
+const installButton = $('#installButton');
+const menuButton = $('#menuButton');
+const menu = $('#menu');
+const captureButton = $('#captureButton');
+const resetButton = $('#resetButton');
+const cameraSelect = $('#cameraSelect');
+const zoomRange = $('#zoomRange');
+const zoomNumber = $('#zoomNumber');
+const zoomValue = $('#zoomValue');
+const aspectSelect = $('#aspectSelect');
+const aspectNumber = $('#aspectNumber');
+const aspectValue = $('#aspectValue');
+const focusModeSelect = $('#focusMode');
+const focusDistanceRow = $('#focusDistanceRow');
+const focusRange = $('#focusRange');
+const focusNumber = $('#focusNumber');
+const focusValue = $('#focusValue');
+const sensYRange = $('#sensYRange');
+const sensYNumber = $('#sensYNumber');
+const sensXRange = $('#sensXRange');
+const sensXNumber = $('#sensXNumber');
+const maxZoomRange = $('#maxZoomRange');
+const maxZoomNumber = $('#maxZoomNumber');
+const infoResolution = $('#infoResolution');
+const infoCrop = $('#infoCrop');
+const infoZoomRange = $('#infoZoomRange');
+const infoOrientation = $('#infoOrientation');
+const infoDevice = $('#infoDevice');
 
-const MAX_ZOOM = 8;
-const DOUBLE_TAP_MS = 320;
-const TAP_SLOP = 24;
-/* Ein Zug über die halbe Bildhöhe verdoppelt bzw. halbiert den Zoom. */
-const ZOOM_TRAVEL = 0.5;
-/* Ein Zug über die volle Bildhöhe durchfährt den ganzen Fokusbereich. */
-const FOCUS_TRAVEL = 1;
+/* ---------------------------------------------------------------- Einstellungen */
 
-const installed = matchMedia('(display-mode: fullscreen)').matches || matchMedia('(display-mode: standalone)').matches;
+const STORAGE_KEY = 'mikroskop.settings';
+const DEFAULTS = {
+  zoom: 1,
+  aspect: 1.6,          /* 16:10 */
+  aspectMode: '1.6',    /* Auswahlwert, "sensor" folgt dem Kameraformat */
+  sensY: 2,             /* Zoom-Verdopplungen pro Bildhöhe (negativ = umgekehrt) */
+  sensX: 1,             /* Anteil des Fokusbereichs pro Bildbreite */
+  maxZoom: 8,
+  focusDistance: null,
+};
+const LIMITS = {
+  zoom: [0.05, 16],
+  aspect: [0.3, 4],
+  sensY: [-8, 8],
+  sensX: [-4, 4],
+  maxZoom: [2, 16],
+};
+
+const clamp = (value, [min, max]) => Math.max(min, Math.min(max, value));
+const number = (value, fallback) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
+const de = (value, digits = 2) => value.toFixed(digits).replace('.', ',');
+
+let settings = { ...DEFAULTS };
+
+function loadSettings() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+    for (const key of Object.keys(DEFAULTS)) {
+      if (!(key in stored)) continue;
+      if (key === 'aspectMode') settings.aspectMode = String(stored.aspectMode);
+      else if (key === 'focusDistance') settings.focusDistance = stored.focusDistance === null ? null : number(stored.focusDistance, null);
+      else settings[key] = clamp(number(stored[key], DEFAULTS[key]), LIMITS[key] ?? [-Infinity, Infinity]);
+    }
+  } catch { /* Kaputte oder gesperrte Ablage: Standardwerte behalten. */ }
+}
+
+function saveSettings() {
+  clearTimeout(saveSettings.timer);
+  saveSettings.timer = setTimeout(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    } catch { /* Privater Modus: nicht speicherbar, egal. */ }
+  }, 250);
+}
+
+/* ---------------------------------------------------------------- Zustand */
 
 let stream;
 let track;
 let animationFrame;
-let zoom = 1;
 let cameraReady = false;
 let installPrompt;
 let focusCaps = { modes: [], range: undefined };
 let pendingFocus;
 let focusBusy = false;
+let visibleRect = { x: 0, y: 0, width: 0, height: 0 };
 let gesture;
-let lastTap = { time: 0, x: 0, y: 0 };
 let pinchStartDistance = 0;
 let pinchStartZoom = 1;
+let uiRotation = 0;
+
+const installed = matchMedia('(display-mode: fullscreen)').matches || matchMedia('(display-mode: standalone)').matches;
 
 const showToast = (message) => {
   toast.value = message;
@@ -46,27 +112,43 @@ const showToast = (message) => {
   showToast.timer = setTimeout(() => toast.classList.remove('show'), 2000);
 };
 
+function showHud() {
+  const lines = [`${de(settings.zoom, 2)}×`];
+  if (manualFocusAvailable()) lines.push(`${de(Number(focusRange.value), 2)} m`);
+  hud.value = lines.join('\n');
+  hud.classList.add('show');
+  clearTimeout(showHud.timer);
+  showHud.timer = setTimeout(() => hud.classList.remove('show'), 1200);
+}
+
 const setMenuOpen = (open) => {
   menu.hidden = !open;
   menuButton.setAttribute('aria-expanded', String(open));
+  if (open) updateReadout();
 };
 
-/* Im Browser bleibt der Installations-Button das einzige Bedienelement,
-   solange das Installieren möglich ist. */
-function updateControls() {
-  const offerInstall = !installed && Boolean(installPrompt);
-  installButton.hidden = !offerInstall;
-  startButton.hidden = cameraReady || offerInstall;
-  menuButton.hidden = !cameraReady || offerInstall;
-  captureButton.hidden = !cameraReady || offerInstall;
-  if (offerInstall) setMenuOpen(false);
+/* ---------------------------------------------------------------- Bühne / Ausrichtung */
+
+/* Die App ist quer gedacht. Lässt sich die Ausrichtung nicht sperren, wird die
+   Bühne selbst gedreht – und die Wischrichtungen wandern mit. */
+function updateStage() {
+  const portrait = innerHeight > innerWidth;
+  stage.classList.toggle('rotated', portrait);
+  uiRotation = portrait ? 90 : 0;
+  infoOrientation.textContent = portrait ? 'hochkant → gedreht' : 'quer';
 }
 
-function setZoom(value) {
-  zoom = Math.max(1, Math.min(MAX_ZOOM, Number(value) || 1));
-  zoomRange.value = String(zoom);
-  zoomValue.textContent = `${zoom.toFixed(1).replace('.', ',')}×`;
+function lockLandscape() {
+  screen.orientation?.lock?.('landscape').catch(() => { /* Nicht überall erlaubt. */ });
 }
+
+/* Bildschirm-Delta in Bühnenkoordinaten: bei gedrehter Bühne tauschen die Achsen. */
+const toStage = (dx, dy) => (uiRotation === 90 ? { x: dy, y: -dx } : { x: dx, y: dy });
+
+addEventListener('resize', updateStage);
+addEventListener('orientationchange', updateStage);
+
+/* ---------------------------------------------------------------- Kamera */
 
 /* Standard: die Kamera, die eine "4" im Namen trägt (z. B. "camera2 0, facing back 4x"). */
 function pickDefaultCamera(cameras) {
@@ -86,59 +168,110 @@ async function listCameras(activeId) {
     return option;
   }));
   cameraSelect.disabled = cameras.length < 2;
+  infoDevice.textContent = cameras.find(({ deviceId }) => deviceId === activeId)?.label || '–';
   return cameras;
 }
 
+async function startCamera(deviceId, { autoSelect = false } = {}) {
+  cancelAnimationFrame(animationFrame);
+  stream?.getTracks().forEach((mediaTrack) => mediaTrack.stop());
+  const resolution = { width: { ideal: 3840 }, height: { ideal: 2160 } };
+  const constraint = deviceId
+    ? { deviceId: { exact: deviceId }, ...resolution }
+    : { facingMode: { ideal: 'environment' }, ...resolution };
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: constraint });
+    video.srcObject = stream;
+    await video.play();
+    track = stream.getVideoTracks()[0];
+
+    const cameras = await listCameras(track.getSettings().deviceId);
+    if (autoSelect) {
+      const preferred = pickDefaultCamera(cameras);
+      if (preferred?.deviceId && preferred.deviceId !== track.getSettings().deviceId) {
+        return startCamera(preferred.deviceId);
+      }
+    }
+
+    buildFocusControls();
+    await restoreFocus();
+    cameraReady = true;
+    updateControls();
+    setZoom(settings.zoom);
+    drawPreview();
+  } catch (error) {
+    cameraReady = false;
+    updateControls();
+    showToast(error.name === 'NotAllowedError' ? 'Kamerazugriff verweigert' : 'Kamera nicht verfügbar');
+  }
+}
+
+/* ---------------------------------------------------------------- Fokus */
+
+const manualFocusAvailable = () => focusCaps.modes.includes('manual') && Boolean(focusCaps.range);
+
 function buildFocusControls() {
   const capabilities = track?.getCapabilities?.() ?? {};
-  const settings = track?.getSettings?.() ?? {};
+  const trackSettings = track?.getSettings?.() ?? {};
   const labels = { continuous: 'Automatisch', 'single-shot': 'Einmalig', manual: 'Manuell' };
   const modes = (capabilities.focusMode ?? []).filter((mode) => mode in labels);
   focusCaps = { modes, range: capabilities.focusDistance };
 
-  focusMode.replaceChildren(...modes.map((mode) => {
+  focusModeSelect.replaceChildren(...modes.map((mode) => {
     const option = document.createElement('option');
     option.value = mode;
     option.textContent = labels[mode];
-    option.selected = mode === settings.focusMode;
+    option.selected = mode === trackSettings.focusMode;
     return option;
   }));
-  focusMode.disabled = modes.length < 2;
+  focusModeSelect.disabled = modes.length < 2;
   if (!modes.length) {
     const option = document.createElement('option');
     option.textContent = 'Nicht steuerbar';
-    focusMode.replaceChildren(option);
+    focusModeSelect.replaceChildren(option);
   }
 
-  const range = capabilities.focusDistance;
-  focusDistanceRow.hidden = !range || !modes.includes('manual');
-  if (!focusDistanceRow.hidden) {
-    focusRange.min = range.min;
-    focusRange.max = range.max;
-    focusRange.step = range.step || (range.max - range.min) / 100;
-    focusRange.value = settings.focusDistance ?? range.min;
-    updateFocusLabel();
+  focusDistanceRow.hidden = !manualFocusAvailable();
+  if (manualFocusAvailable()) {
+    const { min, max, step } = focusCaps.range;
+    for (const input of [focusRange, focusNumber]) {
+      input.min = min;
+      input.max = max;
+      input.step = step || (max - min) / 100 || 0.01;
+    }
+    setFocusDistance(settings.focusDistance ?? trackSettings.focusDistance ?? min, { apply: false });
   }
 }
 
-const manualFocusAvailable = () => focusCaps.modes.includes('manual') && Boolean(focusCaps.range);
-
-function updateFocusLabel() {
-  const value = Number(focusRange.value);
-  const span = Number(focusRange.max) - Number(focusRange.min);
-  const nearness = span ? 1 - (value - Number(focusRange.min)) / span : 1;
-  focusValue.textContent = `${Math.round(nearness * 100)} % nah`;
+/* Die App ist eine Lupe: ohne gespeicherten Wert wird der nächstmögliche Fokus gesetzt. */
+async function restoreFocus() {
+  if (manualFocusAvailable()) {
+    const target = settings.focusDistance ?? focusCaps.range.min;
+    if (await applyFocus('manual', target)) {
+      setFocusDistance(target, { apply: false });
+      focusModeSelect.value = 'manual';
+      return;
+    }
+  }
+  if (focusCaps.modes.includes('continuous')) await applyFocus('continuous');
 }
 
-function setFocusDistance(value) {
+function setFocusDistance(value, { apply = true } = {}) {
+  if (!manualFocusAvailable()) return;
   const { min, max } = focusCaps.range;
-  const clamped = Math.max(min, Math.min(max, value));
+  const clamped = clamp(value, [min, max]);
   focusRange.value = String(clamped);
-  focusDistanceRow.hidden = false;
-  focusMode.value = 'manual';
-  updateFocusLabel();
-  queueFocus(clamped);
-  return clamped;
+  focusNumber.value = clamped.toFixed(2);
+  const span = max - min;
+  focusValue.textContent = `${Math.round((span ? 1 - (clamped - min) / span : 1) * 100)} % nah`;
+  settings.focusDistance = clamped;
+  saveSettings();
+  if (apply) {
+    focusModeSelect.value = 'manual';
+    focusDistanceRow.hidden = false;
+    queueFocus(clamped);
+  }
 }
 
 async function applyFocus(mode, distance) {
@@ -166,50 +299,46 @@ async function queueFocus(distance) {
   focusBusy = false;
 }
 
-/* Bevorzugt den nächstmöglichen Fokus – die App ist eine Lupe. */
-async function applyClosestFocus() {
-  const capabilities = track?.getCapabilities?.() ?? {};
-  const modes = capabilities.focusMode ?? [];
-  const range = capabilities.focusDistance;
-  if (modes.includes('manual') && range && Number.isFinite(range.min)) {
-    if (await applyFocus('manual', range.min)) return;
-  }
-  if (modes.includes('continuous')) await applyFocus('continuous');
+/* ---------------------------------------------------------------- Rendering */
+
+/* Zoom 1 zeigt genau den eingestellten Bildausschnitt (Default 16:10).
+   Darunter wird das Kamerabild komplett unbeschnitten sichtbar, darüber
+   füllt es irgendwann den ganzen Bildschirm. */
+function metrics() {
+  const canvasWidth = canvas.width || 1;
+  const canvasHeight = canvas.height || 1;
+  const videoWidth = video.videoWidth || canvasWidth;
+  const videoHeight = video.videoHeight || canvasHeight;
+  const aspect = settings.aspectMode === 'sensor' ? videoWidth / videoHeight : settings.aspect;
+  /* Bildfenster: größtes Rechteck im gewünschten Format, das auf den Schirm passt. */
+  const frameWidth = Math.min(canvasWidth, canvasHeight * aspect);
+  const frameHeight = frameWidth / aspect;
+  const fitX = frameWidth / videoWidth;
+  const fitY = frameHeight / videoHeight;
+  return {
+    aspect,
+    frameWidth,
+    frameHeight,
+    frameScale: Math.max(fitX, fitY),          /* Zoom 1: Bild deckt das Fenster ab */
+    minZoom: Math.min(fitX, fitY) / Math.max(fitX, fitY), /* ganzes Bild im Fenster */
+    fullZoom: Math.max(canvasWidth / frameWidth, canvasHeight / frameHeight), /* Fenster füllt den Schirm */
+    canvasWidth,
+    canvasHeight,
+    videoWidth,
+    videoHeight,
+  };
 }
 
-async function startCamera(deviceId, { autoSelect = false } = {}) {
-  cancelAnimationFrame(animationFrame);
-  stream?.getTracks().forEach((mediaTrack) => mediaTrack.stop());
-  const resolution = { width: { ideal: 3840 }, height: { ideal: 2160 } };
-  const constraint = deviceId
-    ? { deviceId: { exact: deviceId }, ...resolution }
-    : { facingMode: { ideal: 'environment' }, ...resolution };
-
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: constraint });
-    video.srcObject = stream;
-    await video.play();
-    track = stream.getVideoTracks()[0];
-
-    const cameras = await listCameras(track.getSettings().deviceId);
-    if (autoSelect) {
-      const preferred = pickDefaultCamera(cameras);
-      if (preferred?.deviceId && preferred.deviceId !== track.getSettings().deviceId) {
-        return startCamera(preferred.deviceId);
-      }
-    }
-
-    await applyClosestFocus();
-    buildFocusControls();
-    cameraReady = true;
-    zoomRange.disabled = false;
-    updateControls();
-    drawPreview();
-  } catch (error) {
-    cameraReady = false;
-    updateControls();
-    showToast(error.name === 'NotAllowedError' ? 'Kamerazugriff verweigert' : 'Kamera nicht verfügbar');
-  }
+function setZoom(value, { save = true } = {}) {
+  const { minZoom } = metrics();
+  const low = Math.max(LIMITS.zoom[0], minZoom);
+  settings.zoom = clamp(number(value, 1), [low, settings.maxZoom]);
+  zoomRange.min = low.toFixed(3);
+  zoomRange.max = settings.maxZoom.toFixed(2);
+  zoomRange.value = String(settings.zoom);
+  zoomNumber.value = settings.zoom.toFixed(2);
+  zoomValue.textContent = `${de(settings.zoom, 3)}×`;
+  if (save) saveSettings();
 }
 
 function drawPreview() {
@@ -219,22 +348,53 @@ function drawPreview() {
   if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
     canvas.width = targetWidth;
     canvas.height = targetHeight;
+    setZoom(settings.zoom, { save: false });
   }
   if (video.videoWidth) {
+    const { frameScale, frameWidth, frameHeight, videoWidth, videoHeight } = metrics();
+    const scale = frameScale * settings.zoom;
+    const drawnWidth = videoWidth * scale;
+    const drawnHeight = videoHeight * scale;
+    const left = (targetWidth - drawnWidth) / 2;
+    const top = (targetHeight - drawnHeight) / 2;
+    /* Das Bildfenster wächst ab Zoom 1 mit, bis es den ganzen Schirm füllt. */
+    const windowWidth = Math.min(targetWidth, frameWidth * Math.max(settings.zoom, 1));
+    const windowHeight = Math.min(targetHeight, frameHeight * Math.max(settings.zoom, 1));
+    const windowLeft = (targetWidth - windowWidth) / 2;
+    const windowTop = (targetHeight - windowHeight) / 2;
     context.fillStyle = '#000';
     context.fillRect(0, 0, targetWidth, targetHeight);
-    const fitScale = Math.min(targetWidth / video.videoWidth, targetHeight / video.videoHeight);
-    const drawnWidth = video.videoWidth * fitScale * zoom;
-    const drawnHeight = video.videoHeight * fitScale * zoom;
+    context.save();
+    context.beginPath();
+    context.rect(windowLeft, windowTop, windowWidth, windowHeight);
+    context.clip();
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
-    context.drawImage(video, (targetWidth - drawnWidth) / 2, (targetHeight - drawnHeight) / 2, drawnWidth, drawnHeight);
+    context.drawImage(video, left, top, drawnWidth, drawnHeight);
+    context.restore();
+    const x = Math.max(windowLeft, left);
+    const y = Math.max(windowTop, top);
+    visibleRect = {
+      x,
+      y,
+      width: Math.min(windowLeft + windowWidth, left + drawnWidth) - x,
+      height: Math.min(windowTop + windowHeight, top + drawnHeight) - y,
+    };
   }
   animationFrame = requestAnimationFrame(drawPreview);
 }
 
+/* ---------------------------------------------------------------- Aufnahme */
+
 function capturePhoto() {
-  canvas.toBlob((blob) => {
+  const { width, height } = visibleRect;
+  if (width < 1 || height < 1) return;
+  /* Nur die tatsächlich sichtbare Bildfläche speichern – ohne schwarze Ränder. */
+  const output = document.createElement('canvas');
+  output.width = Math.round(width);
+  output.height = Math.round(height);
+  output.getContext('2d').drawImage(canvas, visibleRect.x, visibleRect.y, width, height, 0, 0, output.width, output.height);
+  output.toBlob((blob) => {
     if (!blob) return;
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -246,46 +406,26 @@ function capturePhoto() {
   }, 'image/jpeg', 0.95);
 }
 
-startButton.addEventListener('click', () => startCamera(undefined, { autoSelect: true }));
-menuButton.addEventListener('click', () => setMenuOpen(menu.hidden));
-captureButton.addEventListener('click', capturePhoto);
-cameraSelect.addEventListener('change', () => startCamera(cameraSelect.value));
-zoomRange.addEventListener('input', () => setZoom(zoomRange.value));
-focusMode.addEventListener('change', async () => {
-  focusDistanceRow.hidden = focusMode.value !== 'manual' || !focusCaps.range;
-  if (!await applyFocus(focusMode.value, Number(focusRange.value))) showToast('Fokusmodus nicht möglich');
-});
-focusRange.addEventListener('input', () => {
-  updateFocusLabel();
-  queueFocus(Number(focusRange.value));
-});
+/* ---------------------------------------------------------------- Gesten */
 
-/* Gesten auf der Vorschau:
-   – ein Finger hoch/runter: Zoom (runter = ran)
-   – Doppeltipp, zweiter Finger bleibt liegen und zieht hoch/runter: Fokus
-     (runter = weiter weg)
-   – zwei Finger: klassisches Pinch-Zoom */
+const AXIS_LOCK = 12;
+
 canvas.addEventListener('touchstart', (event) => {
   setMenuOpen(false);
   if (event.touches.length === 2) {
     gesture = undefined;
     pinchStartDistance = Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY);
-    pinchStartZoom = zoom;
+    pinchStartZoom = settings.zoom;
     return;
   }
   if (event.touches.length !== 1) return;
   const touch = event.touches[0];
-  const isSecondTap = performance.now() - lastTap.time < DOUBLE_TAP_MS
-    && Math.hypot(touch.clientX - lastTap.x, touch.clientY - lastTap.y) < TAP_SLOP * 2;
-  const focusGesture = isSecondTap && manualFocusAvailable();
-  if (isSecondTap && !focusGesture) showToast('Fokus nicht steuerbar');
   gesture = {
-    mode: focusGesture ? 'focus' : 'zoom',
     startX: touch.clientX,
     startY: touch.clientY,
-    startZoom: zoom,
+    startZoom: settings.zoom,
     startFocus: Number(focusRange.value),
-    moved: false,
+    axis: undefined,
   };
 }, { passive: true });
 
@@ -293,30 +433,30 @@ canvas.addEventListener('touchmove', (event) => {
   if (event.touches.length === 2 && pinchStartDistance) {
     const distance = Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY);
     setZoom(pinchStartZoom * distance / pinchStartDistance);
+    showHud();
     return;
   }
   if (event.touches.length !== 1 || !gesture) return;
   const touch = event.touches[0];
-  const deltaY = touch.clientY - gesture.startY;
-  if (Math.hypot(touch.clientX - gesture.startX, deltaY) > TAP_SLOP) gesture.moved = true;
-  if (!gesture.moved) return;
-  const travel = deltaY / Math.max(innerHeight, 1);
-  if (gesture.mode === 'focus') {
-    const { min, max } = focusCaps.range;
-    setFocusDistance(gesture.startFocus + (travel / FOCUS_TRAVEL) * (max - min));
-  } else {
-    setZoom(gesture.startZoom * 2 ** (travel / ZOOM_TRAVEL));
+  const delta = toStage(touch.clientX - gesture.startX, touch.clientY - gesture.startY);
+  if (!gesture.axis) {
+    if (Math.hypot(delta.x, delta.y) < AXIS_LOCK) return;
+    gesture.axis = Math.abs(delta.x) > Math.abs(delta.y) ? 'x' : 'y';
+    if (gesture.axis === 'x' && !manualFocusAvailable()) showToast('Fokus nicht steuerbar');
   }
+  if (gesture.axis === 'y') {
+    /* Nach unten heißt ran. */
+    setZoom(gesture.startZoom * 2 ** (delta.y / stage.clientHeight * settings.sensY));
+  } else if (manualFocusAvailable()) {
+    /* Nach rechts heißt weiter weg. */
+    const { min, max } = focusCaps.range;
+    setFocusDistance(gesture.startFocus + (delta.x / stage.clientWidth) * (max - min) * settings.sensX);
+  }
+  showHud();
 }, { passive: true });
 
 canvas.addEventListener('touchend', (event) => {
   if (event.touches.length === 0) pinchStartDistance = 0;
-  if (!gesture) return;
-  const touch = event.changedTouches[0];
-  /* Nur ein echter Tipp zählt für den Doppeltipp. */
-  lastTap = gesture.moved
-    ? { time: 0, x: 0, y: 0 }
-    : { time: performance.now(), x: touch.clientX, y: touch.clientY };
   gesture = undefined;
 }, { passive: true });
 
@@ -324,14 +464,125 @@ canvas.addEventListener('pointerdown', (event) => {
   if (event.pointerType !== 'touch') setMenuOpen(false);
 });
 
-/* Randlos: im Browser beim ersten Antippen in den Vollbildmodus wechseln. */
-if (!installed) {
-  document.addEventListener('pointerdown', () => {
-    document.documentElement.requestFullscreen?.().catch(() => {});
-  }, { once: true });
+/* ---------------------------------------------------------------- Menü & Zahlen */
+
+/* Regler und Zahlenfeld zeigen denselben Wert und setzen denselben Zustand. */
+function linkPair(range, input, apply) {
+  const handler = (event) => {
+    const value = apply(Number(event.target.value));
+    if (Number.isFinite(value)) {
+      range.value = String(value);
+      input.value = value.toFixed(2);
+    }
+  };
+  range.addEventListener('input', handler);
+  input.addEventListener('change', handler);
 }
 
-window.addEventListener('beforeinstallprompt', (event) => {
+function syncSettingsInputs() {
+  sensYRange.value = String(settings.sensY);
+  sensYNumber.value = settings.sensY.toFixed(2);
+  sensXRange.value = String(settings.sensX);
+  sensXNumber.value = settings.sensX.toFixed(2);
+  maxZoomRange.value = String(settings.maxZoom);
+  maxZoomNumber.value = settings.maxZoom.toFixed(2);
+  aspectSelect.value = settings.aspectMode;
+  aspectNumber.value = settings.aspect.toFixed(3);
+  aspectNumber.disabled = settings.aspectMode === 'sensor';
+  aspectValue.textContent = settings.aspectMode === 'sensor' ? 'Sensor' : de(settings.aspect, 3);
+}
+
+function updateReadout() {
+  const { minZoom, fullZoom, videoWidth, videoHeight } = metrics();
+  infoResolution.textContent = video.videoWidth ? `${videoWidth}×${videoHeight}` : '–';
+  infoCrop.textContent = visibleRect.width ? `${Math.round(visibleRect.width)}×${Math.round(visibleRect.height)}` : '–';
+  infoZoomRange.textContent = `${de(minZoom, 2)} / ${de(fullZoom, 2)}`;
+}
+
+menuButton.addEventListener('click', () => setMenuOpen(menu.hidden));
+captureButton.addEventListener('click', capturePhoto);
+startButton.addEventListener('click', () => {
+  lockLandscape();
+  startCamera(undefined, { autoSelect: true });
+});
+cameraSelect.addEventListener('change', () => startCamera(cameraSelect.value));
+
+linkPair(zoomRange, zoomNumber, (value) => {
+  setZoom(value);
+  showHud();
+  return settings.zoom;
+});
+linkPair(focusRange, focusNumber, (value) => {
+  setFocusDistance(value);
+  showHud();
+  return Number(focusRange.value);
+});
+linkPair(sensYRange, sensYNumber, (value) => {
+  settings.sensY = clamp(number(value, DEFAULTS.sensY), LIMITS.sensY);
+  saveSettings();
+  return settings.sensY;
+});
+linkPair(sensXRange, sensXNumber, (value) => {
+  settings.sensX = clamp(number(value, DEFAULTS.sensX), LIMITS.sensX);
+  saveSettings();
+  return settings.sensX;
+});
+linkPair(maxZoomRange, maxZoomNumber, (value) => {
+  settings.maxZoom = clamp(number(value, DEFAULTS.maxZoom), LIMITS.maxZoom);
+  setZoom(settings.zoom);
+  saveSettings();
+  return settings.maxZoom;
+});
+
+aspectSelect.addEventListener('change', () => {
+  settings.aspectMode = aspectSelect.value;
+  if (settings.aspectMode !== 'sensor') settings.aspect = clamp(number(aspectSelect.value, DEFAULTS.aspect), LIMITS.aspect);
+  syncSettingsInputs();
+  setZoom(settings.zoom);
+  updateReadout();
+  saveSettings();
+});
+aspectNumber.addEventListener('change', () => {
+  settings.aspect = clamp(number(aspectNumber.value, DEFAULTS.aspect), LIMITS.aspect);
+  settings.aspectMode = String(settings.aspect);
+  aspectSelect.value = settings.aspectMode;
+  syncSettingsInputs();
+  setZoom(settings.zoom);
+  updateReadout();
+  saveSettings();
+});
+
+focusModeSelect.addEventListener('change', async () => {
+  focusDistanceRow.hidden = focusModeSelect.value !== 'manual' || !manualFocusAvailable();
+  if (!await applyFocus(focusModeSelect.value, Number(focusRange.value))) showToast('Fokusmodus nicht möglich');
+});
+
+resetButton.addEventListener('click', () => {
+  settings = { ...DEFAULTS };
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch { /* egal */ }
+  syncSettingsInputs();
+  setZoom(DEFAULTS.zoom);
+  if (manualFocusAvailable()) setFocusDistance(focusCaps.range.min);
+  updateReadout();
+  showToast('Standardwerte');
+});
+
+/* ---------------------------------------------------------------- Installation */
+
+/* Im Browser bleibt der Installations-Button das einzige Bedienelement,
+   solange das Installieren möglich ist. */
+function updateControls() {
+  const offerInstall = !installed && Boolean(installPrompt);
+  installButton.hidden = !offerInstall;
+  startButton.hidden = cameraReady || offerInstall;
+  menuButton.hidden = !cameraReady || offerInstall;
+  captureButton.hidden = !cameraReady || offerInstall;
+  if (offerInstall) setMenuOpen(false);
+}
+
+addEventListener('beforeinstallprompt', (event) => {
   event.preventDefault();
   installPrompt = event;
   updateControls();
@@ -342,17 +593,48 @@ installButton.addEventListener('click', async () => {
   updateControls();
   await prompt?.prompt().catch(() => {});
 });
-window.addEventListener('appinstalled', () => {
+addEventListener('appinstalled', () => {
   installPrompt = undefined;
   updateControls();
 });
-window.addEventListener('pagehide', () => stream?.getTracks().forEach((mediaTrack) => mediaTrack.stop()));
 
-setZoom(1);
+/* Randlos: im Browser beim ersten Antippen in den Vollbildmodus wechseln. */
+if (!installed) {
+  document.addEventListener('pointerdown', async () => {
+    await document.documentElement.requestFullscreen?.().catch(() => {});
+    lockLandscape();
+  }, { once: true });
+}
+
+addEventListener('pagehide', () => stream?.getTracks().forEach((mediaTrack) => mediaTrack.stop()));
+
+/* ---------------------------------------------------------------- Start & Update */
+
+loadSettings();
+updateStage();
+syncSettingsInputs();
+setZoom(settings.zoom, { save: false });
 updateControls();
+lockLandscape();
+
 /* Ohne Nachfrage starten, wenn die Berechtigung bereits erteilt ist. */
 navigator.permissions?.query({ name: 'camera' })
   .then(({ state }) => { if (state === 'granted') startCamera(undefined, { autoSelect: true }); })
   .catch(() => {});
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('./service-worker.js');
+/* Beim Öffnen als PWA auf eine neue Version prüfen und automatisch übernehmen. */
+if ('serviceWorker' in navigator) {
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    reloading = true;
+    location.reload();
+  });
+  navigator.serviceWorker.register('./service-worker.js').then((registration) => {
+    registration.update().catch(() => {});
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') registration.update().catch(() => {});
+    });
+  }).catch(() => {});
+}
