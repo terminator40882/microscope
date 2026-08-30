@@ -28,10 +28,10 @@ const focusDistanceRow = $('#focusDistanceRow');
 const focusRange = $('#focusRange');
 const focusNumber = $('#focusNumber');
 const focusValue = $('#focusValue');
-const sensYRange = $('#sensYRange');
-const sensYNumber = $('#sensYNumber');
-const sensXRange = $('#sensXRange');
-const sensXNumber = $('#sensXNumber');
+const sensZoomRange = $('#sensZoomRange');
+const sensZoomNumber = $('#sensZoomNumber');
+const sensFocusRange = $('#sensFocusRange');
+const sensFocusNumber = $('#sensFocusNumber');
 const maxZoomRange = $('#maxZoomRange');
 const maxZoomNumber = $('#maxZoomNumber');
 const infoResolution = $('#infoResolution');
@@ -39,6 +39,7 @@ const infoCrop = $('#infoCrop');
 const infoZoomRange = $('#infoZoomRange');
 const infoOrientation = $('#infoOrientation');
 const infoDevice = $('#infoDevice');
+const infoFocus = $('#infoFocus');
 
 /* ---------------------------------------------------------------- Einstellungen */
 
@@ -47,18 +48,21 @@ const DEFAULTS = {
   zoom: 1,
   aspect: 1.6,          /* 16:10 */
   aspectMode: '1.6',    /* Auswahlwert, "sensor" folgt dem Kameraformat */
-  sensY: 2,             /* Zoom-Verdopplungen pro Bildhöhe (negativ = umgekehrt) */
-  sensX: 1,             /* Anteil des Fokusbereichs pro Bildbreite */
+  sensZoom: 2,          /* Zoom-Verdopplungen pro Bildbreite (negativ = umgekehrt) */
+  sensFocus: 1,         /* Anteil des Fokusbereichs pro Bildhöhe (negativ = umgekehrt) */
   maxZoom: 8,
   focusDistance: null,
 };
 const LIMITS = {
   zoom: [0.05, 16],
   aspect: [0.3, 4],
-  sensY: [-8, 8],
-  sensX: [-4, 4],
+  sensZoom: [-8, 8],
+  sensFocus: [-4, 4],
   maxZoom: [2, 16],
 };
+
+/* Der Zoom wird beim Start bündig zum Auslöser berechnet und daher nicht gespeichert. */
+const PERSISTED = Object.keys(DEFAULTS).filter((key) => key !== 'zoom');
 
 const clamp = (value, [min, max]) => Math.max(min, Math.min(max, value));
 const number = (value, fallback) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
@@ -69,7 +73,7 @@ let settings = { ...DEFAULTS };
 function loadSettings() {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
-    for (const key of Object.keys(DEFAULTS)) {
+    for (const key of PERSISTED) {
       if (!(key in stored)) continue;
       if (key === 'aspectMode') settings.aspectMode = String(stored.aspectMode);
       else if (key === 'focusDistance') settings.focusDistance = stored.focusDistance === null ? null : number(stored.focusDistance, null);
@@ -82,7 +86,8 @@ function saveSettings() {
   clearTimeout(saveSettings.timer);
   saveSettings.timer = setTimeout(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+      const payload = Object.fromEntries(PERSISTED.map((key) => [key, settings[key]]));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch { /* Privater Modus: nicht speicherbar, egal. */ }
   }, 250);
 }
@@ -131,19 +136,30 @@ const setMenuOpen = (open) => {
 
 /* Die App ist quer gedacht. Lässt sich die Ausrichtung nicht sperren, wird die
    Bühne selbst gedreht – und die Wischrichtungen wandern mit. */
+let stageSize = { width: 0, height: 0, rotation: -1 };
+
 function updateStage() {
   const portrait = innerHeight > innerWidth;
   stage.classList.toggle('rotated', portrait);
+  stage.classList.toggle('compact', stage.clientHeight <= 420);
   uiRotation = portrait ? 90 : 0;
   infoOrientation.textContent = portrait ? 'hochkant → gedreht' : 'quer';
+  /* Nur bei echter Größenänderung neu ausrichten – ein bloßes resize-Ereignis
+     (etwa durch die Bildschirmtastatur) soll den Zoom nicht verstellen. */
+  const changed = stage.clientWidth !== stageSize.width
+    || stage.clientHeight !== stageSize.height
+    || uiRotation !== stageSize.rotation;
+  stageSize = { width: stage.clientWidth, height: stage.clientHeight, rotation: uiRotation };
+  if (cameraReady && changed) applyAlignedZoom();
 }
 
 function lockLandscape() {
   screen.orientation?.lock?.('landscape').catch(() => { /* Nicht überall erlaubt. */ });
 }
 
-/* Bildschirm-Delta in Bühnenkoordinaten: bei gedrehter Bühne tauschen die Achsen. */
+/* Bildschirm- in Bühnenkoordinaten: bei gedrehter Bühne tauschen die Achsen. */
 const toStage = (dx, dy) => (uiRotation === 90 ? { x: dy, y: -dx } : { x: dx, y: dy });
+const toStagePoint = (x, y) => (uiRotation === 90 ? { x: y, y: innerWidth - x } : { x, y });
 
 addEventListener('resize', updateStage);
 addEventListener('orientationchange', updateStage);
@@ -175,7 +191,9 @@ async function listCameras(activeId) {
 async function startCamera(deviceId, { autoSelect = false } = {}) {
   cancelAnimationFrame(animationFrame);
   stream?.getTracks().forEach((mediaTrack) => mediaTrack.stop());
-  const resolution = { width: { ideal: 3840 }, height: { ideal: 2160 } };
+  /* Kein Seitenverhältnis erzwingen: ein 16:9-Wunsch schneidet auf 4:3-Sensoren
+     oben und unten weg. Der quadratische Wunschwert wählt den größten Modus. */
+  const resolution = { width: { ideal: 4096 }, height: { ideal: 4096 } };
   const constraint = deviceId
     ? { deviceId: { exact: deviceId }, ...resolution }
     : { facingMode: { ideal: 'environment' }, ...resolution };
@@ -185,6 +203,7 @@ async function startCamera(deviceId, { autoSelect = false } = {}) {
     video.srcObject = stream;
     await video.play();
     track = stream.getVideoTracks()[0];
+    await maximizeResolution();
 
     const cameras = await listCameras(track.getSettings().deviceId);
     if (autoSelect) {
@@ -198,13 +217,26 @@ async function startCamera(deviceId, { autoSelect = false } = {}) {
     await restoreFocus();
     cameraReady = true;
     updateControls();
-    setZoom(settings.zoom);
     drawPreview();
+    applyAlignedZoom();
   } catch (error) {
     cameraReady = false;
     updateControls();
     showToast(error.name === 'NotAllowedError' ? 'Kamerazugriff verweigert' : 'Kamera nicht verfügbar');
   }
+}
+
+/* Größten Modus der Kamera anfordern – das ist der unbeschnittene Bildwinkel. */
+async function maximizeResolution() {
+  const capabilities = track?.getCapabilities?.() ?? {};
+  const current = track?.getSettings?.() ?? {};
+  const maxWidth = capabilities.width?.max;
+  const maxHeight = capabilities.height?.max;
+  if (!maxWidth || !maxHeight) return;
+  if (current.width >= maxWidth && current.height >= maxHeight) return;
+  try {
+    await track.applyConstraints({ width: { ideal: maxWidth }, height: { ideal: maxHeight } });
+  } catch { /* Kamera bleibt beim gewählten Modus. */ }
 }
 
 /* ---------------------------------------------------------------- Fokus */
@@ -233,7 +265,11 @@ function buildFocusControls() {
   }
 
   focusDistanceRow.hidden = !manualFocusAvailable();
+  infoFocus.textContent = focusCaps.range
+    ? `${de(focusCaps.range.min, 2)} … ${de(focusCaps.range.max, 2)} / ${de(focusCaps.range.step ?? 0, 2)}`
+    : '–';
   if (manualFocusAvailable()) {
+    /* Grenzen und Schrittweite kommen unverändert von der Kamera. */
     const { min, max, step } = focusCaps.range;
     for (const input of [focusRange, focusNumber]) {
       input.min = min;
@@ -260,11 +296,13 @@ async function restoreFocus() {
 function setFocusDistance(value, { apply = true } = {}) {
   if (!manualFocusAvailable()) return;
   const { min, max } = focusCaps.range;
-  const clamped = clamp(value, [min, max]);
+  const step = focusCaps.range.step;
+  const snapped = step ? min + Math.round((clamp(value, [min, max]) - min) / step) * step : clamp(value, [min, max]);
+  const clamped = clamp(snapped, [min, max]);
   focusRange.value = String(clamped);
-  focusNumber.value = clamped.toFixed(2);
-  const span = max - min;
-  focusValue.textContent = `${Math.round((span ? 1 - (clamped - min) / span : 1) * 100)} % nah`;
+  focusNumber.value = String(Number(clamped.toFixed(4)));
+  /* Der rohe Gerätewert, ohne Einheiten-Annahme. */
+  focusValue.textContent = `${de(clamped, 2)} von ${de(min, 2)}…${de(max, 2)}`;
   settings.focusDistance = clamped;
   saveSettings();
   if (apply) {
@@ -327,6 +365,24 @@ function metrics() {
     videoWidth,
     videoHeight,
   };
+}
+
+/* Zoom, bei dem die Bildkante genauso weit vom Auslöser entfernt ist wie der
+   Auslöser vom Bildschirmrand. Das Bildfenster wächst ab Zoom 1 mit. */
+function alignedZoom() {
+  const shutter = captureButton.offsetWidth;
+  if (!video.videoWidth || !shutter || !stage.clientWidth) return null;
+  const gap = stage.clientWidth - (captureButton.offsetLeft + shutter);
+  /* Direkt aus den Bühnenmaßen, damit der Wert nicht der Canvas-Größe hinterherhinkt. */
+  const aspect = settings.aspectMode === 'sensor' ? video.videoWidth / video.videoHeight : settings.aspect;
+  const frameCss = Math.min(stage.clientWidth, stage.clientHeight * aspect);
+  const target = stage.clientWidth - 2 * (2 * gap + shutter);
+  return Math.max(1, target / frameCss);
+}
+
+function applyAlignedZoom() {
+  const zoom = alignedZoom();
+  if (zoom) setZoom(zoom);
 }
 
 function setZoom(value, { save = true } = {}) {
@@ -420,9 +476,12 @@ canvas.addEventListener('touchstart', (event) => {
   }
   if (event.touches.length !== 1) return;
   const touch = event.touches[0];
+  const origin = toStagePoint(touch.clientX, touch.clientY);
   gesture = {
     startX: touch.clientX,
     startY: touch.clientY,
+    /* Für "außen = reinzoomen": auf welcher Bildhälfte die Geste beginnt. */
+    outward: Math.sign(origin.x - stage.clientWidth / 2),
     startZoom: settings.zoom,
     startFocus: Number(focusRange.value),
     axis: undefined,
@@ -442,15 +501,16 @@ canvas.addEventListener('touchmove', (event) => {
   if (!gesture.axis) {
     if (Math.hypot(delta.x, delta.y) < AXIS_LOCK) return;
     gesture.axis = Math.abs(delta.x) > Math.abs(delta.y) ? 'x' : 'y';
-    if (gesture.axis === 'x' && !manualFocusAvailable()) showToast('Fokus nicht steuerbar');
+    if (gesture.axis === 'y' && !manualFocusAvailable()) showToast('Fokus nicht steuerbar');
   }
-  if (gesture.axis === 'y') {
-    /* Nach unten heißt ran. */
-    setZoom(gesture.startZoom * 2 ** (delta.y / stage.clientHeight * settings.sensY));
+  if (gesture.axis === 'x') {
+    /* Nach außen heißt ran: die Richtung hängt von der Bildhälfte ab. */
+    const outward = gesture.outward || Math.sign(delta.x);
+    setZoom(gesture.startZoom * 2 ** ((delta.x * outward) / stage.clientWidth * settings.sensZoom));
   } else if (manualFocusAvailable()) {
-    /* Nach rechts heißt weiter weg. */
+    /* Nach unten heißt naher Fokus. */
     const { min, max } = focusCaps.range;
-    setFocusDistance(gesture.startFocus + (delta.x / stage.clientWidth) * (max - min) * settings.sensX);
+    setFocusDistance(gesture.startFocus - (delta.y / stage.clientHeight) * (max - min) * settings.sensFocus);
   }
   showHud();
 }, { passive: true });
@@ -480,10 +540,10 @@ function linkPair(range, input, apply) {
 }
 
 function syncSettingsInputs() {
-  sensYRange.value = String(settings.sensY);
-  sensYNumber.value = settings.sensY.toFixed(2);
-  sensXRange.value = String(settings.sensX);
-  sensXNumber.value = settings.sensX.toFixed(2);
+  sensZoomRange.value = String(settings.sensZoom);
+  sensZoomNumber.value = settings.sensZoom.toFixed(2);
+  sensFocusRange.value = String(settings.sensFocus);
+  sensFocusNumber.value = settings.sensFocus.toFixed(2);
   maxZoomRange.value = String(settings.maxZoom);
   maxZoomNumber.value = settings.maxZoom.toFixed(2);
   aspectSelect.value = settings.aspectMode;
@@ -496,7 +556,8 @@ function updateReadout() {
   const { minZoom, fullZoom, videoWidth, videoHeight } = metrics();
   infoResolution.textContent = video.videoWidth ? `${videoWidth}×${videoHeight}` : '–';
   infoCrop.textContent = visibleRect.width ? `${Math.round(visibleRect.width)}×${Math.round(visibleRect.height)}` : '–';
-  infoZoomRange.textContent = `${de(minZoom, 2)} / ${de(fullZoom, 2)}`;
+  const aligned = alignedZoom();
+  infoZoomRange.textContent = `${de(minZoom, 2)} / ${aligned ? de(aligned, 2) : '–'} / ${de(fullZoom, 2)}`;
 }
 
 menuButton.addEventListener('click', () => setMenuOpen(menu.hidden));
@@ -517,15 +578,15 @@ linkPair(focusRange, focusNumber, (value) => {
   showHud();
   return Number(focusRange.value);
 });
-linkPair(sensYRange, sensYNumber, (value) => {
-  settings.sensY = clamp(number(value, DEFAULTS.sensY), LIMITS.sensY);
+linkPair(sensZoomRange, sensZoomNumber, (value) => {
+  settings.sensZoom = clamp(number(value, DEFAULTS.sensZoom), LIMITS.sensZoom);
   saveSettings();
-  return settings.sensY;
+  return settings.sensZoom;
 });
-linkPair(sensXRange, sensXNumber, (value) => {
-  settings.sensX = clamp(number(value, DEFAULTS.sensX), LIMITS.sensX);
+linkPair(sensFocusRange, sensFocusNumber, (value) => {
+  settings.sensFocus = clamp(number(value, DEFAULTS.sensFocus), LIMITS.sensFocus);
   saveSettings();
-  return settings.sensX;
+  return settings.sensFocus;
 });
 linkPair(maxZoomRange, maxZoomNumber, (value) => {
   settings.maxZoom = clamp(number(value, DEFAULTS.maxZoom), LIMITS.maxZoom);
@@ -538,7 +599,7 @@ aspectSelect.addEventListener('change', () => {
   settings.aspectMode = aspectSelect.value;
   if (settings.aspectMode !== 'sensor') settings.aspect = clamp(number(aspectSelect.value, DEFAULTS.aspect), LIMITS.aspect);
   syncSettingsInputs();
-  setZoom(settings.zoom);
+  applyAlignedZoom();
   updateReadout();
   saveSettings();
 });
@@ -547,7 +608,7 @@ aspectNumber.addEventListener('change', () => {
   settings.aspectMode = String(settings.aspect);
   aspectSelect.value = settings.aspectMode;
   syncSettingsInputs();
-  setZoom(settings.zoom);
+  applyAlignedZoom();
   updateReadout();
   saveSettings();
 });
@@ -564,6 +625,7 @@ resetButton.addEventListener('click', () => {
   } catch { /* egal */ }
   syncSettingsInputs();
   setZoom(DEFAULTS.zoom);
+  applyAlignedZoom();
   if (manualFocusAvailable()) setFocusDistance(focusCaps.range.min);
   updateReadout();
   showToast('Standardwerte');

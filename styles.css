@@ -51,9 +51,9 @@ button, select, input { font: inherit; color: inherit; }
 .ctl-shutter:active span { transform: scale(.86); }
 .ctl-shutter.flash span { background: #fff; }
 
-/* Menü: kleiner, zwischen Auslöser und oberer langer Kante, gleiche Spalte. */
+/* Menü: kleiner, unter dem Auslöser, mittig im Abstand zur unteren Kante. */
 .ctl-menu {
-  top: calc(50% - var(--shutter) / 2 - 22px - var(--menu-size) / 2);
+  top: calc((150% + var(--shutter) / 2 - var(--pad-bottom)) / 2 - var(--menu-size) / 2);
   right: calc(var(--pad-right) + (var(--shutter) - var(--menu-size)) / 2);
   width: var(--menu-size);
   height: var(--menu-size);
@@ -173,8 +173,8 @@ input[type="range"] { width: 100%; margin: 0; accent-color: rgba(255, 255, 255, 
 }
 .toast.show { opacity: 1; translate: -50% 0; }
 
-@media (max-height: 420px) {
-  :root { --shutter: 58px; --menu-size: 34px; --column: 84px; }
-  .menu { gap: 9px; padding: 11px; }
-  .readout { font-size: .68rem; }
-}
+/* Kompakt richtet sich nach der Bühnenhöhe, nicht nach dem Viewport – bei
+   gedrehter Bühne wäre das sonst die falsche Achse. */
+.stage.compact { --shutter: 58px; --menu-size: 34px; --column: 84px; }
+.stage.compact .menu { gap: 9px; padding: 11px; }
+.stage.compact .readout { font-size: .68rem; }

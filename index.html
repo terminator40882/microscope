@@ -79,18 +79,18 @@
         </label>
 
         <label class="row">
-          <span>Empfindlichkeit ↕<em>Zoom</em></span>
+          <span>Empfindlichkeit ↔<em>Zoom</em></span>
           <span class="pair">
-            <input id="sensYRange" type="range" min="-8" max="8" step="0.1" />
-            <input id="sensYNumber" type="number" step="0.1" inputmode="decimal" />
+            <input id="sensZoomRange" type="range" min="-8" max="8" step="0.1" />
+            <input id="sensZoomNumber" type="number" step="0.1" inputmode="decimal" />
           </span>
         </label>
 
         <label class="row">
-          <span>Empfindlichkeit ↔<em>Fokus</em></span>
+          <span>Empfindlichkeit ↕<em>Fokus</em></span>
           <span class="pair">
-            <input id="sensXRange" type="range" min="-4" max="4" step="0.05" />
-            <input id="sensXNumber" type="number" step="0.05" inputmode="decimal" />
+            <input id="sensFocusRange" type="range" min="-4" max="4" step="0.05" />
+            <input id="sensFocusNumber" type="number" step="0.05" inputmode="decimal" />
           </span>
         </label>
 
@@ -105,7 +105,8 @@
         <dl class="readout" id="readout">
           <dt>Auflösung</dt><dd id="infoResolution">–</dd>
           <dt>Ausschnitt</dt><dd id="infoCrop">–</dd>
-          <dt>Zoom min / voll</dt><dd id="infoZoomRange">–</dd>
+          <dt>Zoom min / bündig / voll</dt><dd id="infoZoomRange">–</dd>
+          <dt>Fokus min…max / Schritt</dt><dd id="infoFocus">–</dd>
           <dt>Ausrichtung</dt><dd id="infoOrientation">–</dd>
           <dt>Gerät</dt><dd id="infoDevice">–</dd>
         </dl>
