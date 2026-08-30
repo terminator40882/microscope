@@ -1,4 +1,4 @@
-const CACHE = 'mikroskop-v6';
+const CACHE = 'mikroskop-v7';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './icons/icon.svg'];
 
 /* Neue Version sofort übernehmen – die Seite lädt sich beim controllerchange neu. */

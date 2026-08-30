@@ -26,6 +26,7 @@ const aspectValue = $('#aspectValue');
 const focusModeSelect = $('#focusMode');
 const focusDistanceRow = $('#focusDistanceRow');
 const focusNearRow = $('#focusNearRow');
+const focusBoundsRow = $('#focusBoundsRow');
 const focusRange = $('#focusRange');
 const focusNumber = $('#focusNumber');
 const focusValue = $('#focusValue');
@@ -43,6 +44,8 @@ const infoDevice = $('#infoDevice');
 const infoFocus = $('#infoFocus');
 const infoZoomCaps = $('#infoZoomCaps');
 const focusNearSelect = $('#focusNear');
+const focusLimitMinNumber = $('#focusLimitMin');
+const focusLimitMaxNumber = $('#focusLimitMax');
 
 /* ---------------------------------------------------------------- Einstellungen */
 
@@ -56,12 +59,23 @@ const DEFAULTS = {
   maxZoom: 8,
   focusDistance: null,
   nearEnd: 'auto',      /* welches Ende des Fokusbereichs "nah" bedeutet */
+  focusLimitMin: 0.1,   /* nutzbarer Ausschnitt des Kamerabereichs, roh */
+  focusLimitMax: 0.6,
 };
+
+/* Der Rohwert der Kamera ist unhandlich klein – in der Oberfläche wird er
+   hundertfach angezeigt: 0,10…0,60 wird zu 10…60. */
+const FOCUS_SCALE = 100;
+const toFocusUi = (raw) => raw * FOCUS_SCALE;
+const toFocusRaw = (shown) => shown / FOCUS_SCALE;
+const focusText = (raw) => de(toFocusUi(raw), Number.isInteger(toFocusUi(raw)) ? 0 : 1);
 const LIMITS = {
   zoom: [0.05, 16],
   aspect: [0.3, 4],
   sensZoom: [-8, 8],
   sensFocus: [-4, 4],
+  focusLimitMin: [0, 100],
+  focusLimitMax: [0, 100],
   maxZoom: [2, 16],
 };
 
@@ -124,7 +138,10 @@ const showToast = (message) => {
 
 function showHud() {
   const lines = [`${de(settings.zoom, 2)}×`];
-  if (manualFocusAvailable()) lines.push(`${de(Number(focusRange.value), 2)} m`);
+  if (manualFocusAvailable() && settings.focusDistance !== null) {
+    const raw = settings.focusDistance;
+    lines.push(`F ${focusText(raw)}${dioptreScale() && raw > 0 ? ` ≈ ${de(1 / raw, 2)} m` : ''}`);
+  }
   hud.value = lines.join('\n');
   hud.classList.add('show');
   clearTimeout(showHud.timer);
@@ -253,8 +270,15 @@ const manualFocusAvailable = () => focusCaps.modes.includes('manual') && Boolean
    (kleiner Wert = nah). Per Menü überstimmbar. */
 const dioptreScale = () => focusCaps.range?.min === 0;
 
+function focusBounds() {
+  const caps = focusCaps.range ?? { min: 0, max: 1 };
+  const min = Math.max(caps.min, settings.focusLimitMin);
+  const max = Math.min(caps.max, settings.focusLimitMax);
+  return max > min ? { min, max } : { min: caps.min, max: caps.max };
+}
+
 function focusEnds() {
-  const { min, max } = focusCaps.range ?? { min: 0, max: 1 };
+  const { min, max } = focusBounds();
   const mode = settings.nearEnd === 'auto' ? (dioptreScale() ? 'max' : 'min') : settings.nearEnd;
   return mode === 'max' ? { near: max, far: min } : { near: min, far: max };
 }
@@ -282,20 +306,22 @@ function buildFocusControls() {
 
   focusDistanceRow.hidden = !manualFocusAvailable();
   focusNearRow.hidden = !manualFocusAvailable();
+  focusBoundsRow.hidden = !manualFocusAvailable();
   focusNearSelect.value = settings.nearEnd;
   infoZoomCaps.textContent = capabilities.zoom
     ? `${de(capabilities.zoom.min, 2)} … ${de(capabilities.zoom.max, 2)} / ${de(capabilities.zoom.step ?? 0, 2)}`
     : 'nicht steuerbar';
   infoFocus.textContent = focusCaps.range
-    ? `${de(focusCaps.range.min, 2)} … ${de(focusCaps.range.max, 2)} / ${de(focusCaps.range.step ?? 0, 2)}`
+    ? `${focusText(focusCaps.range.min)} … ${focusText(focusCaps.range.max)} / ${focusText(focusCaps.range.step ?? 0)}`
     : '–';
   if (manualFocusAvailable()) {
-    /* Grenzen und Schrittweite kommen unverändert von der Kamera. */
-    const { min, max, step } = focusCaps.range;
+    /* Grenzen aus Kamera und Einstellung, Schrittweite von der Kamera. */
+    const { min, max } = focusBounds();
+    const step = focusCaps.range.step || (max - min) / 100 || 0.01;
     for (const input of [focusRange, focusNumber]) {
-      input.min = min;
-      input.max = max;
-      input.step = step || (max - min) / 100 || 0.01;
+      input.min = toFocusUi(min);
+      input.max = toFocusUi(max);
+      input.step = toFocusUi(step);
     }
     setFocusDistance(settings.focusDistance ?? trackSettings.focusDistance ?? focusEnds().near, { apply: false });
   }
@@ -316,15 +342,15 @@ async function restoreFocus() {
 
 function setFocusDistance(value, { apply = true } = {}) {
   if (!manualFocusAvailable()) return;
-  const { min, max } = focusCaps.range;
+  const { min, max } = focusBounds();
   const step = focusCaps.range.step;
   const snapped = step ? min + Math.round((clamp(value, [min, max]) - min) / step) * step : clamp(value, [min, max]);
   const clamped = clamp(snapped, [min, max]);
-  focusRange.value = String(clamped);
-  focusNumber.value = String(Number(clamped.toFixed(4)));
-  /* Roher Gerätewert, dazu die Entfernung, falls es Dioptrien sind. */
+  focusRange.value = String(toFocusUi(clamped));
+  focusNumber.value = String(Number(toFocusUi(clamped).toFixed(2)));
+  /* Angezeigter Wert, dazu die Entfernung, falls es Dioptrien sind. */
   const hint = dioptreScale() && clamped > 0 ? ` ≈ ${de(1 / clamped, 2)} m` : '';
-  focusValue.textContent = `${de(clamped, 2)} von ${de(min, 2)}…${de(max, 2)}${hint}`;
+  focusValue.textContent = `${focusText(clamped)} von ${focusText(min)}…${focusText(max)}${hint}`;
   settings.focusDistance = clamped;
   saveSettings();
   if (apply) {
@@ -505,7 +531,7 @@ canvas.addEventListener('touchstart', (event) => {
     /* Für "außen = reinzoomen": auf welcher Bildhälfte die Geste beginnt. */
     outward: Math.sign(origin.x - stage.clientWidth / 2),
     startZoom: settings.zoom,
-    startFocus: Number(focusRange.value),
+    startFocus: settings.focusDistance ?? focusEnds().near,
     axis: undefined,
   };
 }, { passive: true });
@@ -531,7 +557,7 @@ canvas.addEventListener('touchmove', (event) => {
     setZoom(gesture.startZoom * 2 ** ((delta.x * outward) / stage.clientWidth * settings.sensZoom));
   } else if (manualFocusAvailable()) {
     /* Nach unten heißt naher Fokus – in die Richtung, die das Gerät dafür nutzt. */
-    const { min, max } = focusCaps.range;
+    const { min, max } = focusBounds();
     const { near, far } = focusEnds();
     const direction = Math.sign(near - far) || 1;
     setFocusDistance(gesture.startFocus + direction * (delta.y / stage.clientHeight) * (max - min) * settings.sensFocus);
@@ -570,6 +596,8 @@ function syncSettingsInputs() {
   sensFocusNumber.value = settings.sensFocus.toFixed(2);
   maxZoomRange.value = String(settings.maxZoom);
   maxZoomNumber.value = settings.maxZoom.toFixed(2);
+  focusLimitMinNumber.value = String(Number(toFocusUi(settings.focusLimitMin).toFixed(2)));
+  focusLimitMaxNumber.value = String(Number(toFocusUi(settings.focusLimitMax).toFixed(2)));
   aspectSelect.value = settings.aspectMode;
   aspectNumber.value = settings.aspect.toFixed(3);
   aspectNumber.disabled = settings.aspectMode === 'sensor';
@@ -598,7 +626,7 @@ linkPair(zoomRange, zoomNumber, (value) => {
   return settings.zoom;
 });
 linkPair(focusRange, focusNumber, (value) => {
-  setFocusDistance(value);
+  setFocusDistance(toFocusRaw(value));
   showHud();
   return Number(focusRange.value);
 });
@@ -630,12 +658,24 @@ aspectSelect.addEventListener('change', () => {
 aspectNumber.addEventListener('change', () => {
   settings.aspect = clamp(number(aspectNumber.value, DEFAULTS.aspect), LIMITS.aspect);
   settings.aspectMode = String(settings.aspect);
+  focusLimitMinNumber.value = String(Number(toFocusUi(settings.focusLimitMin).toFixed(2)));
+  focusLimitMaxNumber.value = String(Number(toFocusUi(settings.focusLimitMax).toFixed(2)));
   aspectSelect.value = settings.aspectMode;
   syncSettingsInputs();
   applyAlignedZoom();
   updateReadout();
   saveSettings();
 });
+
+for (const [input, key] of [[focusLimitMinNumber, 'focusLimitMin'], [focusLimitMaxNumber, 'focusLimitMax']]) {
+  input.addEventListener('change', () => {
+    settings[key] = clamp(toFocusRaw(number(input.value, toFocusUi(DEFAULTS[key]))), LIMITS[key]);
+    saveSettings();
+    buildFocusControls();
+    setFocusDistance(settings.focusDistance ?? focusEnds().near);
+    syncSettingsInputs();
+  });
+}
 
 focusNearSelect.addEventListener('change', () => {
   settings.nearEnd = focusNearSelect.value;
