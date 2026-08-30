@@ -25,6 +25,7 @@ const aspectNumber = $('#aspectNumber');
 const aspectValue = $('#aspectValue');
 const focusModeSelect = $('#focusMode');
 const focusDistanceRow = $('#focusDistanceRow');
+const focusNearRow = $('#focusNearRow');
 const focusRange = $('#focusRange');
 const focusNumber = $('#focusNumber');
 const focusValue = $('#focusValue');
@@ -40,6 +41,8 @@ const infoZoomRange = $('#infoZoomRange');
 const infoOrientation = $('#infoOrientation');
 const infoDevice = $('#infoDevice');
 const infoFocus = $('#infoFocus');
+const infoZoomCaps = $('#infoZoomCaps');
+const focusNearSelect = $('#focusNear');
 
 /* ---------------------------------------------------------------- Einstellungen */
 
@@ -52,6 +55,7 @@ const DEFAULTS = {
   sensFocus: 1,         /* Anteil des Fokusbereichs pro Bildhöhe (negativ = umgekehrt) */
   maxZoom: 8,
   focusDistance: null,
+  nearEnd: 'auto',      /* welches Ende des Fokusbereichs "nah" bedeutet */
 };
 const LIMITS = {
   zoom: [0.05, 16],
@@ -77,6 +81,7 @@ function loadSettings() {
       if (!(key in stored)) continue;
       if (key === 'aspectMode') settings.aspectMode = String(stored.aspectMode);
       else if (key === 'focusDistance') settings.focusDistance = stored.focusDistance === null ? null : number(stored.focusDistance, null);
+      else if (key === 'nearEnd') settings.nearEnd = ['auto', 'min', 'max'].includes(stored.nearEnd) ? stored.nearEnd : 'auto';
       else settings[key] = clamp(number(stored[key], DEFAULTS[key]), LIMITS[key] ?? [-Infinity, Infinity]);
     }
   } catch { /* Kaputte oder gesperrte Ablage: Standardwerte behalten. */ }
@@ -243,6 +248,17 @@ async function maximizeResolution() {
 
 const manualFocusAvailable = () => focusCaps.modes.includes('manual') && Boolean(focusCaps.range);
 
+/* Chrome auf Android reicht den Rohwert der Kamera durch. Beginnt der Bereich
+   bei 0, sind es Dioptrien (0 = unendlich, großer Wert = nah); sonst Meter
+   (kleiner Wert = nah). Per Menü überstimmbar. */
+const dioptreScale = () => focusCaps.range?.min === 0;
+
+function focusEnds() {
+  const { min, max } = focusCaps.range ?? { min: 0, max: 1 };
+  const mode = settings.nearEnd === 'auto' ? (dioptreScale() ? 'max' : 'min') : settings.nearEnd;
+  return mode === 'max' ? { near: max, far: min } : { near: min, far: max };
+}
+
 function buildFocusControls() {
   const capabilities = track?.getCapabilities?.() ?? {};
   const trackSettings = track?.getSettings?.() ?? {};
@@ -265,6 +281,11 @@ function buildFocusControls() {
   }
 
   focusDistanceRow.hidden = !manualFocusAvailable();
+  focusNearRow.hidden = !manualFocusAvailable();
+  focusNearSelect.value = settings.nearEnd;
+  infoZoomCaps.textContent = capabilities.zoom
+    ? `${de(capabilities.zoom.min, 2)} … ${de(capabilities.zoom.max, 2)} / ${de(capabilities.zoom.step ?? 0, 2)}`
+    : 'nicht steuerbar';
   infoFocus.textContent = focusCaps.range
     ? `${de(focusCaps.range.min, 2)} … ${de(focusCaps.range.max, 2)} / ${de(focusCaps.range.step ?? 0, 2)}`
     : '–';
@@ -276,14 +297,14 @@ function buildFocusControls() {
       input.max = max;
       input.step = step || (max - min) / 100 || 0.01;
     }
-    setFocusDistance(settings.focusDistance ?? trackSettings.focusDistance ?? min, { apply: false });
+    setFocusDistance(settings.focusDistance ?? trackSettings.focusDistance ?? focusEnds().near, { apply: false });
   }
 }
 
 /* Die App ist eine Lupe: ohne gespeicherten Wert wird der nächstmögliche Fokus gesetzt. */
 async function restoreFocus() {
   if (manualFocusAvailable()) {
-    const target = settings.focusDistance ?? focusCaps.range.min;
+    const target = settings.focusDistance ?? focusEnds().near;
     if (await applyFocus('manual', target)) {
       setFocusDistance(target, { apply: false });
       focusModeSelect.value = 'manual';
@@ -301,8 +322,9 @@ function setFocusDistance(value, { apply = true } = {}) {
   const clamped = clamp(snapped, [min, max]);
   focusRange.value = String(clamped);
   focusNumber.value = String(Number(clamped.toFixed(4)));
-  /* Der rohe Gerätewert, ohne Einheiten-Annahme. */
-  focusValue.textContent = `${de(clamped, 2)} von ${de(min, 2)}…${de(max, 2)}`;
+  /* Roher Gerätewert, dazu die Entfernung, falls es Dioptrien sind. */
+  const hint = dioptreScale() && clamped > 0 ? ` ≈ ${de(1 / clamped, 2)} m` : '';
+  focusValue.textContent = `${de(clamped, 2)} von ${de(min, 2)}…${de(max, 2)}${hint}`;
   settings.focusDistance = clamped;
   saveSettings();
   if (apply) {
@@ -508,9 +530,11 @@ canvas.addEventListener('touchmove', (event) => {
     const outward = gesture.outward || Math.sign(delta.x);
     setZoom(gesture.startZoom * 2 ** ((delta.x * outward) / stage.clientWidth * settings.sensZoom));
   } else if (manualFocusAvailable()) {
-    /* Nach unten heißt naher Fokus. */
+    /* Nach unten heißt naher Fokus – in die Richtung, die das Gerät dafür nutzt. */
     const { min, max } = focusCaps.range;
-    setFocusDistance(gesture.startFocus - (delta.y / stage.clientHeight) * (max - min) * settings.sensFocus);
+    const { near, far } = focusEnds();
+    const direction = Math.sign(near - far) || 1;
+    setFocusDistance(gesture.startFocus + direction * (delta.y / stage.clientHeight) * (max - min) * settings.sensFocus);
   }
   showHud();
 }, { passive: true });
@@ -613,6 +637,13 @@ aspectNumber.addEventListener('change', () => {
   saveSettings();
 });
 
+focusNearSelect.addEventListener('change', () => {
+  settings.nearEnd = focusNearSelect.value;
+  saveSettings();
+  setFocusDistance(focusEnds().near);
+  showHud();
+});
+
 focusModeSelect.addEventListener('change', async () => {
   focusDistanceRow.hidden = focusModeSelect.value !== 'manual' || !manualFocusAvailable();
   if (!await applyFocus(focusModeSelect.value, Number(focusRange.value))) showToast('Fokusmodus nicht möglich');
@@ -626,7 +657,7 @@ resetButton.addEventListener('click', () => {
   syncSettingsInputs();
   setZoom(DEFAULTS.zoom);
   applyAlignedZoom();
-  if (manualFocusAvailable()) setFocusDistance(focusCaps.range.min);
+  if (manualFocusAvailable()) setFocusDistance(focusEnds().near);
   updateReadout();
   showToast('Standardwerte');
 });

@@ -78,6 +78,15 @@
           </span>
         </label>
 
+        <label class="row" id="focusNearRow" hidden>
+          <span>Nah-Ende</span>
+          <select id="focusNear">
+            <option value="auto">Automatisch</option>
+            <option value="max">Großer Wert = nah</option>
+            <option value="min">Kleiner Wert = nah</option>
+          </select>
+        </label>
+
         <label class="row">
           <span>Empfindlichkeit ↔<em>Zoom</em></span>
           <span class="pair">
@@ -107,6 +116,7 @@
           <dt>Ausschnitt</dt><dd id="infoCrop">–</dd>
           <dt>Zoom min / bündig / voll</dt><dd id="infoZoomRange">–</dd>
           <dt>Fokus min…max / Schritt</dt><dd id="infoFocus">–</dd>
+          <dt>Kamera-Zoom</dt><dd id="infoZoomCaps">–</dd>
           <dt>Ausrichtung</dt><dd id="infoOrientation">–</dd>
           <dt>Gerät</dt><dd id="infoDevice">–</dd>
         </dl>
