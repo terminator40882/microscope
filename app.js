@@ -74,8 +74,9 @@ const LIMITS = {
   aspect: [0.3, 4],
   sensZoom: [-8, 8],
   sensFocus: [-4, 4],
-  focusLimitMin: [0, 100],
-  focusLimitMax: [0, 100],
+  /* roh wie settings.focusLimitMin – die Kamera engt später weiter ein */
+  focusLimitMin: [0, 1000],
+  focusLimitMax: [0, 1000],
   maxZoom: [2, 16],
 };
 
@@ -270,11 +271,23 @@ const manualFocusAvailable = () => focusCaps.modes.includes('manual') && Boolean
    (kleiner Wert = nah). Per Menü überstimmbar. */
 const dioptreScale = () => focusCaps.range?.min === 0;
 
-function focusBounds() {
+/* Was die Kamera überhaupt hergibt – der eingetragene Bereich ist nur ein
+   Ausschnitt davon. */
+function focusCapsBounds() {
   const caps = focusCaps.range ?? { min: 0, max: 1 };
-  const min = Math.max(caps.min, settings.focusLimitMin);
-  const max = Math.min(caps.max, settings.focusLimitMax);
-  return max > min ? { min, max } : { min: caps.min, max: caps.max };
+  return caps.max > caps.min ? { min: caps.min, max: caps.max } : { min: caps.min, max: caps.min };
+}
+
+/* Ein Ende außerhalb der Kamera wird an deren Grenze gezogen, nicht der ganze
+   Bereich verworfen: sonst stünde bei jeder unpassenden Eingabe wieder der
+   volle Kamerabereich da. */
+function focusBounds() {
+  const caps = focusCapsBounds();
+  let min = clamp(settings.focusLimitMin, [caps.min, caps.max]);
+  let max = clamp(settings.focusLimitMax, [caps.min, caps.max]);
+  if (min > max) [min, max] = [max, min];
+  /* Erst wenn nichts übrig bleibt, bleibt nur der Kamerabereich. */
+  return max > min ? { min, max } : caps;
 }
 
 function focusEnds() {
@@ -323,6 +336,13 @@ function buildFocusControls() {
       input.max = toFocusUi(max);
       input.step = toFocusUi(step);
     }
+    /* Die Bereichsfelder zeigen, was die Kamera zulässt. */
+    const caps = focusCapsBounds();
+    for (const input of [focusLimitMinNumber, focusLimitMaxNumber]) {
+      input.min = toFocusUi(caps.min);
+      input.max = toFocusUi(caps.max);
+      input.step = toFocusUi(step);
+    }
     setFocusDistance(settings.focusDistance ?? trackSettings.focusDistance ?? focusEnds().near, { apply: false });
   }
 }
@@ -344,7 +364,10 @@ function setFocusDistance(value, { apply = true } = {}) {
   if (!manualFocusAvailable()) return;
   const { min, max } = focusBounds();
   const step = focusCaps.range.step;
-  const snapped = step ? min + Math.round((clamp(value, [min, max]) - min) / step) * step : clamp(value, [min, max]);
+  /* Das Raster der Kamera beginnt bei deren Minimum, nicht beim eingetragenen. */
+  const base = focusCapsBounds().min;
+  const wanted = clamp(value, [min, max]);
+  const snapped = step ? base + Math.round((wanted - base) / step) * step : wanted;
   const clamped = clamp(snapped, [min, max]);
   focusRange.value = String(toFocusUi(clamped));
   focusNumber.value = String(Number(toFocusUi(clamped).toFixed(2)));
@@ -669,7 +692,14 @@ aspectNumber.addEventListener('change', () => {
 
 for (const [input, key] of [[focusLimitMinNumber, 'focusLimitMin'], [focusLimitMaxNumber, 'focusLimitMax']]) {
   input.addEventListener('change', () => {
-    settings[key] = clamp(toFocusRaw(number(input.value, toFocusUi(DEFAULTS[key]))), LIMITS[key]);
+    const typed = input.value.trim() === '' ? toFocusUi(DEFAULTS[key]) : number(input.value, toFocusUi(DEFAULTS[key]));
+    const wanted = clamp(toFocusRaw(typed), LIMITS[key]);
+    /* Weiter als die Kamera geht es nicht – dann steht auch das im Feld. */
+    const caps = manualFocusAvailable() ? focusCapsBounds() : { min: LIMITS[key][0], max: LIMITS[key][1] };
+    settings[key] = clamp(wanted, [caps.min, caps.max]);
+    if (manualFocusAvailable() && Math.abs(settings[key] - wanted) > 1e-9) {
+      showToast(`Kamera kann nur ${focusText(caps.min)}…${focusText(caps.max)}`);
+    }
     saveSettings();
     buildFocusControls();
     setFocusDistance(settings.focusDistance ?? focusEnds().near);
